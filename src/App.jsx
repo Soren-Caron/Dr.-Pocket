@@ -33,6 +33,8 @@ const JOKES = [
   "Why did the tendon get promoted? Because it always stayed connected under pressure.",
 ]
 
+const SEV_COLOR = { high: '#e74c3c', medium: '#f39c12', low: '#2ecc71' }
+
 const labelStyle = { fontSize: '9px', fontWeight: '400', letterSpacing: '1.5px', textTransform: 'uppercase', color: 'rgba(255,255,255,0.25)', marginBottom: '4px', fontFamily: "'DM Sans', sans-serif" }
 const inputStyle = { width: '100%', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '8px', padding: '7px 10px', color: 'rgba(255,255,255,0.7)', fontSize: '12px', fontWeight: '300', fontFamily: "'DM Sans', sans-serif", outline: 'none', boxSizing: 'border-box' }
 
@@ -235,7 +237,7 @@ function BodyModel({ onPartClick, onHover, onHoverEnd, interactive, selectedRegi
 useGLTF.preload('/sampleUntitled.glb')
 
 // ─── Annotation Panel ─────────────────────────────────────────────────────────
-function AnnotationPanel({ region, regionType, setRegionType, symptom, setSymptom, customText, setCustomText, onGetRemedies, loading, onClear, remedies, historyOpen }) {
+function AnnotationPanel({ region, regionType, setRegionType, symptom, setSymptom, customText, setCustomText, onGetRemedies, loading, onClear, remedies, historyOpen, onScanSkin, scanResult, onClearScan }) {
   return (
     <div style={{
       position: 'absolute', right: historyOpen ? '420px' : '320px', top: '50%', transform: 'translateY(-50%)',
@@ -296,6 +298,41 @@ function AnnotationPanel({ region, regionType, setRegionType, symptom, setSympto
           resize: 'none', boxSizing: 'border-box', marginBottom: '12px', outline: 'none',
         }}
       />
+
+      <div style={{ marginBottom: '12px' }}>
+        <div style={{ fontSize: '10px', fontWeight: '400', letterSpacing: '2.5px', textTransform: 'uppercase', color: 'rgba(255,255,255,0.28)', marginBottom: '8px' }}>
+          Skin Scan <span style={{ textTransform: 'none', letterSpacing: 0, color: 'rgba(255,255,255,0.18)' }}>· optional</span>
+        </div>
+        {scanResult ? (
+          <div style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '10px', padding: '10px 12px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <div style={{ fontSize: '13px', fontWeight: '300', color: 'rgba(255,255,255,0.8)', marginBottom: '2px' }}>{scanResult.condition}</div>
+                <div style={{ fontSize: '11px', fontWeight: '300', color: 'rgba(255,255,255,0.35)' }}>{Math.round(scanResult.confidence * 100)}% confidence</div>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span style={{
+                  padding: '3px 9px', borderRadius: '999px', fontSize: '10px', fontWeight: '400',
+                  letterSpacing: '1px', textTransform: 'uppercase',
+                  background: `${SEV_COLOR[scanResult.severity]}22`,
+                  border: `1px solid ${SEV_COLOR[scanResult.severity]}44`,
+                  color: SEV_COLOR[scanResult.severity],
+                }}>{scanResult.severity}</span>
+                <button onClick={onClearScan} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.2)', cursor: 'pointer', fontSize: '14px', padding: '2px', lineHeight: 1 }}>✕</button>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <button onClick={onScanSkin} style={{
+            width: '100%', padding: '9px', background: 'transparent',
+            border: '1px solid rgba(255,255,255,0.1)', borderRadius: '10px',
+            color: 'rgba(255,255,255,0.45)', fontSize: '11px', fontWeight: '400',
+            letterSpacing: '2px', textTransform: 'uppercase', cursor: 'pointer',
+            fontFamily: "'DM Sans', sans-serif",
+          }}>◎ Scan skin</button>
+        )}
+      </div>
+
       <button onClick={onGetRemedies} disabled={(!symptom && !customText) || loading}
         style={{
           width: '100%', padding: '11px', background: 'rgba(255,255,255,0.08)',
@@ -317,6 +354,193 @@ function AnnotationPanel({ region, regionType, setRegionType, symptom, setSympto
           }
         </div>
       )}
+    </div>
+  )
+}
+
+// ─── Skin Scan Modal ──────────────────────────────────────────────────────────
+function SkinScanModal({ bodyRegion, onClose, onResult }) {
+  const videoRef  = useRef(null)
+  const streamRef = useRef(null)
+  const [phase, setPhase]             = useState('camera') // 'camera' | 'preview' | 'loading' | 'result'
+  const [capturedB64, setCapturedB64] = useState(null)
+  const [result, setResult]           = useState(null)
+  const [error, setError]             = useState(null)
+
+  useEffect(() => {
+    let active = true
+    navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1920 } },
+    }).then(stream => {
+      if (!active) { stream.getTracks().forEach(t => t.stop()); return }
+      streamRef.current = stream
+      if (videoRef.current) videoRef.current.srcObject = stream
+    }).catch(() => setError('Camera access denied. Please allow camera access and try again.'))
+    return () => { active = false; streamRef.current?.getTracks().forEach(t => t.stop()) }
+  }, [])
+
+  function capture() {
+    const video = videoRef.current
+    if (!video) return
+    const size = Math.min(video.videoWidth, video.videoHeight)
+    const canvas = document.createElement('canvas')
+    canvas.width = canvas.height = 1024
+    canvas.getContext('2d').drawImage(
+      video,
+      (video.videoWidth - size) / 2, (video.videoHeight - size) / 2, size, size,
+      0, 0, 1024, 1024
+    )
+    streamRef.current?.getTracks().forEach(t => t.stop())
+    setCapturedB64(canvas.toDataURL('image/jpeg', 0.92).split(',')[1])
+    setPhase('preview')
+  }
+
+  async function analyze() {
+    setPhase('loading')
+    try {
+      const base = import.meta.env.VITE_ML_BACKEND_URL || 'http://localhost:8000'
+      const res = await fetch(`${base}/predict`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image: capturedB64, body_region: bodyRegion, zoom_level: 1.0 }),
+      })
+      if (!res.ok) throw new Error()
+      setResult(await res.json())
+      setPhase('result')
+    } catch {
+      setError('Could not reach the skin analysis server. Make sure the ML backend is running on port 8000.')
+      setPhase('preview')
+    }
+  }
+
+  function retake() {
+    setCapturedB64(null); setResult(null); setError(null); setPhase('camera')
+    navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1920 } },
+    }).then(stream => {
+      streamRef.current = stream
+      if (videoRef.current) videoRef.current.srcObject = stream
+    }).catch(() => setError('Camera access denied.'))
+  }
+
+  return (
+    <div onClick={onClose} style={{
+      position: 'absolute', inset: 0, zIndex: 600,
+      background: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(8px)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      fontFamily: "'DM Sans', sans-serif",
+    }}>
+      <div onClick={e => e.stopPropagation()} style={{
+        width: '440px', background: '#0a0a0a',
+        border: '1px solid rgba(255,255,255,0.08)',
+        borderRadius: '24px', overflow: 'hidden',
+        boxShadow: '0 40px 100px rgba(0,0,0,0.9)',
+      }}>
+        {/* Header */}
+        <div style={{ padding: '20px 24px', borderBottom: '1px solid rgba(255,255,255,0.06)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div>
+            <div style={{ fontSize: '16px', fontWeight: '400', color: 'white', letterSpacing: '-0.3px' }}>Skin Scan</div>
+            <div style={{ fontSize: '11px', fontWeight: '300', color: 'rgba(255,255,255,0.3)', marginTop: '2px' }}>{bodyRegion}</div>
+          </div>
+          <button onClick={onClose} style={{
+            background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.07)',
+            color: 'rgba(255,255,255,0.3)', borderRadius: '50%', width: '32px', height: '32px',
+            cursor: 'pointer', fontSize: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}>✕</button>
+        </div>
+
+        <div style={{ padding: '20px 24px 24px' }}>
+          {/* Viewfinder / Preview */}
+          {(phase === 'camera' || phase === 'preview') && (
+            <div style={{ position: 'relative', borderRadius: '16px', overflow: 'hidden', background: '#111', marginBottom: '16px', aspectRatio: '1/1' }}>
+              {phase === 'camera'
+                ? <video ref={videoRef} autoPlay playsInline muted style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+                : <img src={`data:image/jpeg;base64,${capturedB64}`} alt="Captured" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
+              }
+              {phase === 'camera' && (
+                <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none' }}>
+                  <div style={{ width: '68%', height: '68%', border: '1.5px solid rgba(255,255,255,0.45)', borderRadius: '50%' }} />
+                  <div style={{ position: 'absolute', bottom: '14px', fontSize: '11px', fontWeight: '300', color: 'rgba(255,255,255,0.5)', letterSpacing: '1px' }}>
+                    Center lesion within circle
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Loading */}
+          {phase === 'loading' && (
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '200px' }}>
+              <div style={{ fontSize: '11px', fontWeight: '400', letterSpacing: '2.5px', textTransform: 'uppercase', color: 'rgba(255,255,255,0.35)', animation: 'blink 1.6s ease-in-out infinite' }}>Analyzing...</div>
+            </div>
+          )}
+
+          {/* Results */}
+          {phase === 'result' && result && (
+            <div style={{ marginBottom: '16px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '16px' }}>
+                <div>
+                  <div style={{ fontSize: '10px', fontWeight: '400', letterSpacing: '2.5px', textTransform: 'uppercase', color: 'rgba(255,255,255,0.28)', marginBottom: '5px' }}>Detected condition</div>
+                  <div style={{ fontSize: '20px', fontWeight: '300', color: 'white', letterSpacing: '-0.4px' }}>{result.condition}</div>
+                </div>
+                <span style={{
+                  marginTop: '18px', padding: '4px 12px', borderRadius: '999px',
+                  fontSize: '10px', fontWeight: '400', letterSpacing: '1.5px', textTransform: 'uppercase',
+                  background: `${SEV_COLOR[result.severity]}22`, border: `1px solid ${SEV_COLOR[result.severity]}55`,
+                  color: SEV_COLOR[result.severity], flexShrink: 0,
+                }}>{result.severity}</span>
+              </div>
+
+              <div style={{ marginBottom: '20px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
+                  <span style={{ fontSize: '10px', fontWeight: '400', letterSpacing: '2px', textTransform: 'uppercase', color: 'rgba(255,255,255,0.28)' }}>Confidence</span>
+                  <span style={{ fontSize: '12px', fontWeight: '300', color: 'rgba(255,255,255,0.6)' }}>{Math.round(result.confidence * 100)}%</span>
+                </div>
+                <div style={{ height: '4px', background: 'rgba(255,255,255,0.08)', borderRadius: '4px' }}>
+                  <div style={{ height: '100%', borderRadius: '4px', width: `${result.confidence * 100}%`, background: SEV_COLOR[result.severity] }} />
+                </div>
+              </div>
+
+              <div style={{ fontSize: '10px', fontWeight: '400', letterSpacing: '2.5px', textTransform: 'uppercase', color: 'rgba(255,255,255,0.28)', marginBottom: '10px' }}>Differential</div>
+              {result.top3.map((t, i) => (
+                <div key={t.label} style={{ display: 'flex', justifyContent: 'space-between', padding: '7px 0', borderBottom: i < 2 ? '1px solid rgba(255,255,255,0.04)' : 'none' }}>
+                  <span style={{ fontSize: '13px', fontWeight: '300', color: i === 0 ? 'rgba(255,255,255,0.8)' : 'rgba(255,255,255,0.35)' }}>{t.label}</span>
+                  <span style={{ fontSize: '12px', fontWeight: '300', color: i === 0 ? 'rgba(255,255,255,0.55)' : 'rgba(255,255,255,0.25)' }}>{Math.round(t.prob * 100)}%</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Error */}
+          {error && (
+            <div style={{ marginBottom: '14px', padding: '12px 14px', background: 'rgba(231,76,60,0.08)', border: '1px solid rgba(231,76,60,0.2)', borderRadius: '10px', fontSize: '12px', fontWeight: '300', color: '#e07070', lineHeight: 1.6 }}>
+              {error}
+            </div>
+          )}
+
+          {/* Action buttons */}
+          <div style={{ display: 'flex', gap: '8px' }}>
+            {phase === 'camera' && !error && (
+              <button onClick={capture} style={{ flex: 1, padding: '13px', background: 'white', color: '#000', border: 'none', borderRadius: '12px', fontSize: '13px', fontWeight: '600', fontFamily: "'DM Sans', sans-serif", cursor: 'pointer' }}>
+                Capture
+              </button>
+            )}
+            {phase === 'camera' && error && (
+              <button onClick={onClose} style={{ flex: 1, padding: '13px', background: 'transparent', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '12px', color: 'rgba(255,255,255,0.5)', fontSize: '13px', fontFamily: "'DM Sans', sans-serif", cursor: 'pointer' }}>
+                Close
+              </button>
+            )}
+            {phase === 'preview' && (<>
+              <button onClick={retake} style={{ flex: 1, padding: '13px', background: 'transparent', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '12px', color: 'rgba(255,255,255,0.5)', fontSize: '13px', fontFamily: "'DM Sans', sans-serif", cursor: 'pointer' }}>Retake</button>
+              <button onClick={analyze} style={{ flex: 1, padding: '13px', background: 'white', color: '#000', border: 'none', borderRadius: '12px', fontSize: '13px', fontWeight: '600', fontFamily: "'DM Sans', sans-serif", cursor: 'pointer' }}>Analyze</button>
+            </>)}
+            {phase === 'result' && (<>
+              <button onClick={retake} style={{ flex: 1, padding: '13px', background: 'transparent', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '12px', color: 'rgba(255,255,255,0.5)', fontSize: '13px', fontFamily: "'DM Sans', sans-serif", cursor: 'pointer' }}>Retake</button>
+              <button onClick={() => { onResult(result); onClose() }} style={{ flex: 1, padding: '13px', background: 'white', color: '#000', border: 'none', borderRadius: '12px', fontSize: '13px', fontWeight: '600', fontFamily: "'DM Sans', sans-serif", cursor: 'pointer' }}>Use result</button>
+            </>)}
+          </div>
+        </div>
+      </div>
     </div>
   )
 }
@@ -394,6 +618,8 @@ export default function App() {
     conditions: '', medications: '', allergies: '',
     activityLevel: '', smoking: '', familyHistory: '',
   })
+  const [showSkinScan, setShowSkinScan] = useState(false)
+  const [scanResult, setScanResult]     = useState(null)
   const [jokeVisible, setJokeVisible] = useState(false)
   const [jokeFading, setJokeFading]   = useState(false)
   const [currentJoke, setCurrentJoke] = useState('')
@@ -439,6 +665,7 @@ export default function App() {
     setClickPoint(null); setRegion(null); setZoomed(false)
     setSymptom(null); setCustomText(''); setRemedies(null)
     setRegionType(null); setCameraModified(false)
+    setScanResult(null)
     setResetKey(k => k + 1)
   }
 
@@ -490,7 +717,10 @@ export default function App() {
       profile.familyHistory && `Family history: ${profile.familyHistory}`,
     ].filter(Boolean).join('. ')
 
-    const prompt = `I have the following issue — ${parts.join(', ')}.${ctx ? ` Patient context: ${ctx}.` : ''} Give me the best practical at-home remedies. Be specific and concise. Format as a numbered list.`
+    const scanCtx = scanResult
+      ? ` Camera skin scan detected: ${scanResult.condition} (${Math.round(scanResult.confidence * 100)}% confidence, ${scanResult.severity} severity).`
+      : ''
+    const prompt = `I have the following issue — ${parts.join(', ')}.${ctx ? ` Patient context: ${ctx}.` : ''}${scanCtx} Give me the best practical at-home remedies. Be specific and concise. Format as a numbered list.`
 
     const res = await fetch('/api/remedies', {
       method: 'POST',
@@ -646,6 +876,9 @@ export default function App() {
                   onGetRemedies={getRemedies} loading={loading}
                   onClear={handleClear} remedies={remedies}
                   historyOpen={showHistory}
+                  onScanSkin={() => setShowSkinScan(true)}
+                  scanResult={scanResult}
+                  onClearScan={() => setScanResult(null)}
                 />
               )}
 
@@ -853,6 +1086,15 @@ export default function App() {
               </svg>
             </button>
           </div>
+        )}
+
+        {/* Skin scan modal */}
+        {showSkinScan && region && (
+          <SkinScanModal
+            bodyRegion={region}
+            onClose={() => setShowSkinScan(false)}
+            onResult={result => { setScanResult(result); setShowSkinScan(false) }}
+          />
         )}
 
         {/* Medical history sidebar */}

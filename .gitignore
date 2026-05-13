@@ -14,8 +14,11 @@ dist-ssr
 .env
 
 # ML data and model weights — too large for git
-ml/data/
-ml/models/
+ml/data/**/*.jpg
+ml/data/**/*.jpeg
+ml/data/**/*.png
+ml/data/**/*.csv
+ml/models/*.pth
 ml/venv/
 __pycache__/
 *.pth
